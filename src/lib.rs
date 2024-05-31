@@ -1,5 +1,7 @@
 use core::ffi::c_int;
 
+pub mod pg;
+
 #[no_mangle]
 pub extern "C" fn cranelift_add(left: c_int, right: c_int) -> c_int {
     println!("In Rust: left = {}, right = {}", left, right);
