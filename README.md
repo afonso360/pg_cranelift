@@ -13,3 +13,7 @@ pg_ctlcluster 14 ccluster restart
 ```bash
 psql -h /tmp -p 5433 -d postgres -U afonso
 ```
+
+```bash
+cargo install --force cbindgen
+```
