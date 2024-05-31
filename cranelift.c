@@ -26,6 +26,8 @@ PG_MODULE_MAGIC;
 
 extern void _PG_jit_provider_init(JitProviderCallbacks *cb);
 
+extern int cranelift_add(int a, int b);
+
 /* Function prototypes for JIT compilation. */
 static bool cranelift_compile_expr(ExprState *state) {
   /*
@@ -33,6 +35,9 @@ static bool cranelift_compile_expr(ExprState *state) {
    * loaded successfully.
    */
   elog(NOTICE, "cranelift_compile_expr");
+
+  cranelift_add(1, 2);
+
   /* Returning 'false' indicates we won't jit the current expression. */
   return false;
 }
