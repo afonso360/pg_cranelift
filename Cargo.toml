@@ -7,6 +7,11 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [dependencies]
+cranelift-frontend = "^0.108"
+cranelift-codegen = "^0.108"
+cranelift-module = "^0.108"
+cranelift-jit = "^0.108"
+cranelift-native = "^0.108"
 
 [build-dependencies]
 bindgen = "^0.69"

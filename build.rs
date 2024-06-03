@@ -37,6 +37,7 @@ fn main() {
         // TODO: Hardcoded for now, we should call pg_config to get this
         .clang_arg("-I/usr/include/postgresql/14/server/")
         .header(wrapper_h_path.to_str().unwrap())
+        .newtype_enum("ExprEvalOp")
         .parse_callbacks(Box::new(IgnoreMacros::new()))
         .generate()
         .expect("Unable to generate bindings");

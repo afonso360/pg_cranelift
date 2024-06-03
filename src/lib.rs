@@ -1,3 +1,6 @@
+use expr_translator::PGJit;
+
+mod expr_translator;
 pub mod pg;
 
 #[repr(C)]
@@ -7,7 +10,7 @@ struct PgCraneliftContext {
 
 #[no_mangle]
 pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
-    println!("In Rust: cranelift_compile_expr");
+    // println!("In Rust: cranelift_compile_expr");
 
     // Make this a reference so that it's easier to work with
     assert!(!state.is_null());
@@ -48,18 +51,37 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
 
     let _jit_ctx = unsafe { &mut (*jit_ctx_ptr) };
 
-    dbg!(jit_ctx_ptr);
+    let mut jitmodule = PGJit::default();
+    let func_id = jitmodule.build(state);
+    let func_addr = jitmodule.get_func_addr(func_id);
+
+    // Assing the function address to the state
+    state.evalfunc = unsafe { std::mem::transmute::<*const u8, pg::ExprStateEvalFunc>(func_addr) };
 
     /* Returning 'false' indicates we won't jit the current expression. */
-    false
+    true
+
+    // {
+    //     SlowJitCompiledExprState *cstate =
+    //         palloc0(sizeof(SlowJitCompiledExprState));
+
+    //     cstate->jit_ctx = jit_ctx;
+    //     cstate->funcname = funcname;
+
+    //     state->evalfunc = slowjit_exec_compiled_expr;
+    //     state->evalfunc_private = cstate;
+    //   }
+
+    //   return true;
 }
 
 #[no_mangle]
 pub extern "C" fn _cranelift_release_context(_ctx: *mut pg::JitContext) {
-    println!("In Rust: cranelift_release_context");
+    // println!("In Rust: cranelift_release_context");
 }
 
 #[no_mangle]
 pub extern "C" fn _cranelift_reset_after_error() {
-    println!("In Rust: cranelift_reset_after_error");
+    // println!("In Rust: cranelift_reset_after_error");
+    unimplemented!();
 }
