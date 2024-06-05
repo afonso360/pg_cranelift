@@ -27,9 +27,11 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
     let estate = unsafe { &mut *parent.state };
 
     let jit_ctx_ptr: *mut PgCraneliftContext = if !estate.es_jit.is_null() {
+        println!("Reusing JIT Context");
         // This means that we have previously created a JIT context, lets reuse it
         estate.es_jit.cast::<PgCraneliftContext>()
     } else {
+        println!("Allocating JIT Context");
         unsafe {
             pg::ResourceOwnerEnlargeJIT(pg::CurrentResourceOwner);
 
@@ -57,14 +59,22 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
     let jit_ctx = unsafe { &mut (*jit_ctx_ptr) };
 
     let jitmodule = jit_ctx.jit.as_mut().unwrap();
-    let func_id = jitmodule.build(state);
-    let func_addr = jitmodule.get_func_addr(func_id);
 
-    // Assing the function address to the state
-    state.evalfunc = unsafe { std::mem::transmute::<*const u8, pg::ExprStateEvalFunc>(func_addr) };
+    match jitmodule.build(state) {
+        Ok(func_id) => {
+            let func_addr = jitmodule.get_func_addr(func_id);
 
-    /* Returning 'false' indicates we won't jit the current expression. */
-    true
+            // Assing the function address to the state
+            state.evalfunc = func_addr;
+
+            // Returning 'true' indicates we won't jit the current expression.
+            true
+        }
+        Err(e) => {
+            println!("Unable to compile experssion with error: {}", e);
+            false
+        }
+    }
 
     // {
     //     SlowJitCompiledExprState *cstate =
@@ -76,8 +86,6 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
     //     state->evalfunc = slowjit_exec_compiled_expr;
     //     state->evalfunc_private = cstate;
     //   }
-
-    //   return true;
 }
 
 #[no_mangle]

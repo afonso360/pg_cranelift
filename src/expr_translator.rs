@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::mem::offset_of;
 
 use cranelift_codegen::ir::types::I8;
@@ -7,9 +9,36 @@ use cranelift_codegen::ir::{MemFlags, Type};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{DataDescription, FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module, ModuleError};
 
 use crate::pg::{self, ExprState};
+
+pub type PGJitResult<T> = Result<T, PGJitError>;
+
+#[derive(Debug)]
+pub enum PGJitError {
+    /// A Opcode is not yet implemented in the JIT.
+    UnimplementedOpcode(pg::ExprEvalOp),
+    /// An error that occurs when registering a function in a module
+    ModuleError(ModuleError),
+}
+
+impl fmt::Display for PGJitError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PGJitError::UnimplementedOpcode(op) => {
+                write!(f, "Unimplemented opcode: {}", op.name())
+            }
+            PGJitError::ModuleError(e) => write!(f, "Module error: {}", e),
+        }
+    }
+}
+
+impl From<ModuleError> for PGJitError {
+    fn from(e: ModuleError) -> Self {
+        PGJitError::ModuleError(e)
+    }
+}
 
 pub struct PGJit {
     /// The function builder context, which is reused across multiple
@@ -25,6 +54,9 @@ pub struct PGJit {
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
     module: JITModule,
+
+    /// All registered function names.
+    func_names: HashMap<FuncId, String>,
 }
 
 impl Default for PGJit {
@@ -47,6 +79,7 @@ impl Default for PGJit {
             ctx: module.make_context(),
             _data_description: DataDescription::new(),
             module,
+            func_names: HashMap::new(),
         }
     }
 }
@@ -64,6 +97,11 @@ impl Drop for PGJit {
 }
 
 impl PGJit {
+    fn reset_builder(&mut self) {
+        self.module.clear_context(&mut self.ctx);
+        self.builder_context = FunctionBuilderContext::new();
+    }
+
     pub fn eval_signature(&self) -> Signature {
         // Emulate the following signature:
         //
@@ -82,7 +120,11 @@ impl PGJit {
         sig
     }
 
-    pub fn build(&mut self, state: &mut ExprState) -> FuncId {
+    pub fn build(&mut self, state: &mut ExprState) -> PGJitResult<FuncId> {
+        // TODO: When we fail a compilation we should reset the context. We currently
+        // don't deal with that very well, so just reset it before we start any compilation.
+        self.reset_builder();
+
         self.ctx.func.signature = self.eval_signature();
 
         // Create the builder to build a function.
@@ -110,7 +152,7 @@ impl PGJit {
         };
         let args = FuncArgs {
             state: builder.block_params(entry_block)[0],
-            econtext: builder.block_params(entry_block)[1],
+            _econtext: builder.block_params(entry_block)[1],
             isnull: builder.block_params(entry_block)[2],
         };
         let tmp = StepResult {
@@ -132,7 +174,7 @@ impl PGJit {
             unsafe {
                 let op = &mut *state.steps.offset(opno.try_into().unwrap());
                 let opcode = pg::ExecEvalStepOp(state, op);
-                expr_translator.translate_step(opno, opcode, op);
+                expr_translator.translate_step(opno, opcode, op)?;
             }
         }
 
@@ -144,8 +186,12 @@ impl PGJit {
         self.register_function()
     }
 
-    fn register_function(&mut self) -> FuncId {
-        let name = "interp_func"; // TODO: make this dynamic
+    fn register_function(&mut self) -> PGJitResult<FuncId> {
+        // To avoid duplicate names, we append the pid and function number to the
+        // name.
+        let func_number = self.func_names.len();
+        let pid = unsafe { pg::MyProcPid };
+        let name = format!("pgcranelift_eval_expr_{pid}_{func_number}");
 
         // Next, declare the function to jit. Functions must be declared
         // before they can be called, or defined.
@@ -155,37 +201,34 @@ impl PGJit {
         // the function?
         let id = self
             .module
-            .declare_function(&name, Linkage::Export, &self.ctx.func.signature)
-            .map_err(|e| e.to_string())
-            .unwrap();
+            .declare_function(&name, Linkage::Export, &self.ctx.func.signature)?;
+
+        // Register Name
+        self.func_names.insert(id, name.clone());
 
         // Define the function to jit. This finishes compilation, although
         // there may be outstanding relocations to perform. Currently, jit
         // cannot finish relocations until all functions to be called are
         // defined.
-        self.module
-            .define_function(id, &mut self.ctx)
-            .map_err(|e| e.to_string())
-            .unwrap();
+        self.module.define_function(id, &mut self.ctx)?;
 
         println!("Optimized Func: {}", self.ctx.func.display());
-
-        // Now that compilation is finished, we can clear out the context state.
-        self.module.clear_context(&mut self.ctx);
 
         // Finalize the functions which we just defined, which resolves any
         // outstanding relocations (patching in addresses, now that they're
         // available).
-        self.module.finalize_definitions().unwrap();
+        self.module.finalize_definitions()?;
 
         // Clear the context to free memory.
         self.ctx.clear();
 
-        id
+        Ok(id)
     }
 
-    pub fn get_func_addr(&self, id: FuncId) -> *const u8 {
-        self.module.get_finalized_function(id)
+    pub fn get_func_addr(&self, id: FuncId) -> pg::ExprStateEvalFunc {
+        let func_addr = self.module.get_finalized_function(id);
+
+        unsafe { std::mem::transmute::<*const u8, pg::ExprStateEvalFunc>(func_addr) }
     }
 }
 
@@ -201,9 +244,9 @@ struct ISATypes {
 }
 
 struct FuncArgs {
-    state: Value,    // ExprState *state
-    econtext: Value, // ExprContext *econtext,
-    isnull: Value,   // bool *isnull
+    state: Value,     // ExprState *state
+    _econtext: Value, // ExprContext *econtext,
+    isnull: Value,    // bool *isnull
 }
 
 pub struct ExprTranslator<'a> {
@@ -243,7 +286,7 @@ impl<'a> ExprTranslator<'a> {
         opno: usize,
         opcode: pg::ExprEvalOp,
         op: &mut pg::ExprEvalStep,
-    ) {
+    ) -> PGJitResult<()> {
         let op_resvalue_ptr = self
             .builder
             .ins()
@@ -359,8 +402,10 @@ impl<'a> ExprTranslator<'a> {
                 self.builder.ins().return_(&[resvalue]);
             }
             _ => {
-                println!("// OP({:?}) to implement", opcode);
+                return Err(PGJitError::UnimplementedOpcode(opcode));
             }
         }
+
+        Ok(())
     }
 }
