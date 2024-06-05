@@ -107,3 +107,17 @@ impl ExprEvalOp {
         }
     }
 }
+
+impl ExprState {
+    pub fn format_steps(&mut self) -> String {
+        let mut result = String::new();
+        for opno in 0..(self.steps_len as usize) {
+            unsafe {
+                let op = &mut *self.steps.offset(opno.try_into().unwrap());
+                let opcode = ExecEvalStepOp(self, op);
+                result.push_str(&format!("{}: {}\n", opno, opcode.name()));
+            }
+        }
+        result
+    }
+}

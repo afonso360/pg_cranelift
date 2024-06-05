@@ -145,6 +145,9 @@ impl PGJit {
         // predecessors.
         builder.seal_block(entry_block);
 
+        // Debug print the opcodes for this expression, before compiling
+        println!("Expression Steps:\n{}", state.format_steps());
+
         // Translate the steps of the expression.
         let types = ISATypes {
             bool: I8,
@@ -296,7 +299,6 @@ impl<'a> ExprTranslator<'a> {
             .ins()
             .iconst(self.types.pointer, op.resnull as i64);
 
-        println!("   // Step: {opno} -> {}", opcode.name());
         match opcode {
             pg::ExprEvalOp::EEOP_ASSIGN_TMP => {
                 // EEO_CASE(EEOP_ASSIGN_TMP)
