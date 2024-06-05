@@ -75,17 +75,6 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
             false
         }
     }
-
-    // {
-    //     SlowJitCompiledExprState *cstate =
-    //         palloc0(sizeof(SlowJitCompiledExprState));
-
-    //     cstate->jit_ctx = jit_ctx;
-    //     cstate->funcname = funcname;
-
-    //     state->evalfunc = slowjit_exec_compiled_expr;
-    //     state->evalfunc_private = cstate;
-    //   }
 }
 
 #[no_mangle]
