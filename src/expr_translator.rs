@@ -51,6 +51,18 @@ impl Default for PGJit {
     }
 }
 
+impl Drop for PGJit {
+    fn drop(&mut self) {
+        // The JIT Module contains the backing memory for all of the JITted functions.
+        // It does not clear them on Drop. So we have to do it ourselves by first
+        // replacing it with an empty module, and then freeing the previous ones.
+        let empty_module =
+            JITModule::new(JITBuilder::new(cranelift_module::default_libcall_names()).unwrap());
+        let allocd_module = std::mem::replace(&mut self.module, empty_module);
+        unsafe { allocd_module.free_memory() };
+    }
+}
+
 impl PGJit {
     pub fn eval_signature(&self) -> Signature {
         // Emulate the following signature:

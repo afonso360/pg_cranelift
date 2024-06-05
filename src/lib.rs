@@ -6,6 +6,9 @@ pub mod pg;
 #[repr(C)]
 struct PgCraneliftContext {
     base: pg::JitContext,
+
+    // Managed by the rust memory allocator.
+    jit: Option<Box<PGJit>>,
 }
 
 #[no_mangle]
@@ -45,13 +48,15 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
             /* For re-using the JIT context. */
             estate.es_jit = &mut (*jit_ctx).base;
 
+            (*jit_ctx).jit = Some(Box::new(PGJit::default()));
+
             jit_ctx
         }
     };
 
-    let _jit_ctx = unsafe { &mut (*jit_ctx_ptr) };
+    let jit_ctx = unsafe { &mut (*jit_ctx_ptr) };
 
-    let mut jitmodule = PGJit::default();
+    let jitmodule = jit_ctx.jit.as_mut().unwrap();
     let func_id = jitmodule.build(state);
     let func_addr = jitmodule.get_func_addr(func_id);
 
@@ -76,8 +81,14 @@ pub extern "C" fn _cranelift_compile_expr(state: *mut pg::ExprState) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn _cranelift_release_context(_ctx: *mut pg::JitContext) {
-    // println!("In Rust: cranelift_release_context");
+pub extern "C" fn _cranelift_release_context(ctx: *mut pg::JitContext) {
+    println!("Cleaning up JitContext");
+
+    let jit_ctx = unsafe { &mut *(ctx as *mut PgCraneliftContext) };
+
+    // PgJIT is owned by the rust memory allocator, so we have to manually drop it to ensure it gets
+    // correctly free'd.
+    jit_ctx.jit = None;
 }
 
 #[no_mangle]
